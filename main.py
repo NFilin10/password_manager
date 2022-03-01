@@ -1,127 +1,69 @@
-import pymysql
-from db_config import *
 import hashlib
-import os
-from binascii import hexlify, unhexlify
-from cryptography.hazmat.primitives.ciphers.aead import AESGCM
-
-
-try:
-    connection = pymysql.connect(
-        host=host,
-        port=3306,
-        user=user,
-        password=password,
-        database=db_name,
-        cursorclass=pymysql.cursors.DictCursor
-    )
-
-except:
-    print("error")
-
-cursor = connection.cursor()
-
-def deriveKey(passphrase, salt: bytes=None):
-    if salt is None:
-        salt = os.urandom(8)
-    return hashlib.pbkdf2_hmac("sha256", passphrase.encode("utf8"), salt, 1000), salt
-
-
-def encrypt(passphrase, plaintext):
-    key, salt = deriveKey(passphrase)
-    aes = AESGCM(key)
-    iv = os.urandom(12)
-    plaintext = plaintext.encode("utf8")
-    ciphertext = aes.encrypt(iv, plaintext, None)
-    return "%s-%s-%s" % (hexlify(salt).decode("utf8"), hexlify(iv).decode("utf8"), hexlify(ciphertext).decode("utf8"))
-
-
-def decrypt(passphrase, ciphertext):
-    salt, iv, ciphertext = map(unhexlify, ciphertext.split("-"))
-    key, _ = deriveKey(passphrase, salt)
-    aes = AESGCM(key)
-    plaintext = aes.decrypt(iv, ciphertext, None)
-    return plaintext.decode("utf8")
-
-def insert_password(master_pass, master_pass_hash_text):
-    app = input("Insert app name: ")
-    login = input("Insert login: ")
-    password = input("ur password: ")
-    ciphertext = encrypt(master_pass, password)
-    insert_query = ("INSERT INTO passwords (password, user, app, login) VALUES (%s, %s, %s, %s);")
-    values = ciphertext, master_pass_hash_text, app, login
-    cursor.execute(insert_query, values)
-    connection.commit()
-    print("Password added")
-
-def show_all_passwords(master_pass_hash_text, master_pass):
-    select_query = ("SELECT password, app, login FROM passwords WHERE user=(%s);")
-    values = master_pass_hash_text
-    cursor.execute(select_query, values)
-    connection.commit()
-    data = cursor.fetchall()
-    if data == ():
-        print("No passwords")
-    else:
-        for datas in data:
-            passwords = (datas['password'])
-            app = (datas['app'])
-            login = (datas['login'])
-            print(str(app).capitalize() + "\n" + "Login: " + login + "\n" + "Password: " + decrypt(master_pass, passwords))
-
-def find_app_pass(master_pass_hash_text, master_pass):
-    app_name = input("Insert app name: ")
-    select_query = ("SELECT password, app, login FROM passwords WHERE user=(%s) AND app=(%s);")
-    values = master_pass_hash_text, app_name
-    cursor.execute(select_query, values)
-    connection.commit()
-    data = cursor.fetchall()
-    if data == ():
-        print("No such app")
-    else:
-        for datas in data:
-            passwords = (datas['password'])
-            app = (datas['app'])
-            login = (datas['login'])
-            print(str(app).capitalize() + "\n" + "Login: " + login + "\n" + "Password: " + decrypt(master_pass, passwords))
-
-def find_pass_by_login(master_pass_hash_text, master_pass):
-    login = input("Insert login: ")
-    select_query = ("SELECT password, app, login FROM passwords WHERE user=(%s) AND login=(%s);")
-    values = master_pass_hash_text, login
-    cursor.execute(select_query, values)
-    connection.commit()
-    data = cursor.fetchall()
-    if data == ():
-        print("No such login")
-    else:
-        for datas in data:
-            passwords = (datas['password'])
-            app = (datas['app'])
-            login = (datas['login'])
-            print(login + "\n" + "App: " + app + "\n" + "Password: " + decrypt(master_pass, passwords))
+from database import Database
+from encryption import Encryption
+from app_func import AppFunctions
 
 def main():
-    master_pass = input("Insert Your master password: ")
-    master_pass_hash = hashlib.sha256(master_pass.encode())
-    master_pass_hash_text = master_pass_hash.hexdigest()
+    try:
+        user_login = input("Insert Your login\nType 1 if You are a new user\n")
+        if user_login == "1":
+            user_login = input("Insert Your login: ")
+            master_pass = input("Insert Your master password: ")
+            master_pass_repeat = input("Repeat Your master password: ")
+            if master_pass == master_pass_repeat:
+                master_pass_hash = hashlib.sha256(master_pass.encode())
+                master_pass_hash_text = master_pass_hash.hexdigest()
+                select_query = ("SELECT login FROM users WHERE login=(%s);")
+                values = user_login
+                database.cursor.execute(select_query, values)
+                database.connection.commit()
+                data = database.cursor.fetchall()
+                if data == ():
+                    insert_query = ("INSERT INTO users (login, password) VALUES (%s, %s);")
+                    values = user_login, master_pass_hash_text
+                    database.cursor.execute(insert_query, values)
+                    database.connection.commit()
+                    print("Your account is created")
+                    main()
+                else:
+                    print("Login already exists")
+                    main()
+            else:
+                print("Passwords do not match")
+                main()
+        else:
+            master_pass = input("Insert Your master password: ")
+            master_pass_hash = hashlib.sha256(master_pass.encode())
+            master_pass_hash_text = master_pass_hash.hexdigest()
+            functions.select_query = ("SELECT login, password FROM users WHERE login = %s AND password = %s;")
+            values = user_login, master_pass_hash_text
+            database.cursor.execute(functions.select_query, values)
+            database.connection.commit()
+            data = database.cursor.fetchall()
+            if data == ():
+                print("Incorrect login or password")
+                main()
+            else:
+                while True:
+                    print("1 - insert new password\n2 - print all passwords\n3 - find definite app password\n4 - find app and password by login")
+                    func = input("Choose func: ")
+                    if func == '1':
+                        functions.insert_password(master_pass, master_pass_hash_text, user_login)
 
-    while True:
-        print("1 - insert new password\n2 - print all passwords\n3 - find definite app password\n4 - find app and password by login")
-        func = input("Choose func: ")
-        if func == '1':
-            insert_password(master_pass, master_pass_hash_text)
+                    elif func == '2':
+                       functions.show_all_passwords(master_pass_hash_text, master_pass, user_login)
 
-        elif func == '2':
-           show_all_passwords(master_pass_hash_text, master_pass)
+                    elif func == '3':
+                        functions.find_app_pass(master_pass_hash_text, master_pass, user_login)
 
-        elif func == '3':
-            find_app_pass(master_pass_hash_text, master_pass)
+                    elif func == '4':
+                        functions.find_pass_by_login(master_pass_hash_text, master_pass, user_login)
+    except Exception as e:
+        database.connection.close()
 
-        elif func == '4':
-            find_pass_by_login(master_pass_hash_text, master_pass)
+database = Database()
+encryption = Encryption()
+functions = AppFunctions()
 
-    connection.close()
-
-main()
-
+if __name__ == '__main__':
+    main()

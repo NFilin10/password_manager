@@ -1,5 +1,2 @@
-/.idea
-/__pycache__
 /db_config.py
-/encryption.py
-/test.py
+
